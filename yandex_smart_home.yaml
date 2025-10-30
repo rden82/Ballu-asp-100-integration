@@ -1,3 +1,6 @@
+# Яндекс Умный Дом через Yandex Smart Home
+# Добавить этот раздел в configuration.yaml
+# Заменить MAC на mac адрес устройства (без двоеточий)
 yandex_smart_home:
   entity_config:
     climate.ballu_asp_100_{{MAC}}:
