@@ -50,7 +50,7 @@ class BalluASP100Breezer(ClimateEntity):
     """Representation of a Ballu ASP-100 Breezer device."""
 
     _attr_has_entity_name = True
-    _attr_name = "Ballu ONEAIR ASP-100 Breezer"
+    _attr_name = "Бризер"  # Изменили на русское название для Алисы
     
     # Supported features - updated for breezer
     _attr_supported_features = (
@@ -92,7 +92,7 @@ class BalluASP100Breezer(ClimateEntity):
         self._attr_unique_id = f"ballu_asp100_{device_mac}_breezer"
         self._attr_device_info = {
             "identifiers": {(DOMAIN, device_mac)},
-            "name": "Ballu ONEAIR ASP-100 Breezer",
+            "name": "Бризер",  # Изменили на русское название
             "manufacturer": MANUFACTURER,
             "model": MODEL,
         }
@@ -170,8 +170,7 @@ class BalluASP100Breezer(ClimateEntity):
                     
                 # Log state synchronization status
                 if all(self._state_received.values()):
-                    _LOGGER.debug("All state synchronized: mode=%s, speed=%s, temp=%s, current_temp=%s",
-                                 self._current_mode, self._fan_mode, self._target_temperature, self._current_temperature)
+                    _LOGGER.debug("All state synchronized: mode=%s, speed=%s, temp=%s, current_temp=%s", self._current_mode, self._fan_mode, self._target_temperature, self._current_temperature)
                 
                 self.async_write_ha_state()
                 
@@ -208,8 +207,7 @@ class BalluASP100Breezer(ClimateEntity):
             else:
                 self._preset_mode = PRESET_NONE     # "none"
                 
-            _LOGGER.debug("Updated mode: value=%s, hvac=%s, preset=%s", 
-                         mode_value, self._hvac_mode, self._preset_mode)
+            _LOGGER.debug("Updated mode: value=%s, hvac=%s, preset=%s", mode_value, self._hvac_mode, self._preset_mode)
                         
         except ValueError:
             _LOGGER.error("Invalid mode payload: %s", payload)
@@ -350,7 +348,28 @@ class BalluASP100Breezer(ClimateEntity):
         self._current_mode = int(mode_value)
         self.async_write_ha_state()
 
-    # Property methods
+    @property
+    def hvac_mode(self) -> HVACMode:
+        """Return current operation mode."""
+        return self._hvac_mode
+
+    @property
+    def fan_mode(self) -> str | None:
+        """Return the fan setting."""
+        if self._fan_mode is None:
+            return "Off"
+        return self._fan_mode
+
+    @property
+    def preset_mode(self) -> str | None:
+        """Return the preset setting."""
+        return self._preset_mode
+
+    @property
+    def temperature_unit(self) -> str:
+        """Return the unit of measurement."""
+        return UnitOfTemperature.CELSIUS
+
     @property
     def current_temperature(self) -> float | None:
         """Return the current temperature."""
@@ -362,19 +381,22 @@ class BalluASP100Breezer(ClimateEntity):
         return self._target_temperature
 
     @property
-    def hvac_mode(self) -> HVACMode:
-        """Return current operation mode."""
-        return self._hvac_mode
+    def target_temperature_step(self) -> float:
+        """Return the supported step of target temperature."""
+        return 1.0
 
     @property
-    def fan_mode(self) -> str | None:
-        """Return the fan setting."""
-        # Return "unknown" if we haven't received state yet
-        if self._fan_mode is None:
-            return "Off"  # Default to Off until we get actual state
-        return self._fan_mode
+    def min_temp(self) -> float:
+        """Return the minimum temperature."""
+        return 5.0
 
     @property
-    def preset_mode(self) -> str | None:
-        """Return the preset setting."""
-        return self._preset_mode
+    def max_temp(self) -> float:
+        """Return the maximum temperature."""
+        return 25.0
+
+    # Добавьте этот метод для поддержки Yandex Smart Home
+    @property
+    def supported_features(self) -> int:
+        """Return the list of supported features."""
+        return self._attr_supported_features

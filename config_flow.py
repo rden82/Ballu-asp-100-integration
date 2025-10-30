@@ -45,7 +45,7 @@ class BalluConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 
                 # Create the config entry
                 return self.async_create_entry(
-                    title=f"Ballu ASP-100 ({user_input[CONF_DEVICE_MAC]})",
+                    title=f"Бризер ({user_input[CONF_DEVICE_MAC]})",
                     data=user_input,
                 )
 

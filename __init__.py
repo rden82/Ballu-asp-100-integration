@@ -39,6 +39,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Setup platforms
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     
+    # Register Yandex Smart Home support
+    try:
+        from .yandex_smart_home import YandexSmartHomeBalluASP100
+        hass.data[DOMAIN]['yandex_smart_home'] = YandexSmartHomeBalluASP100(hass)
+    except ImportError:
+        _LOGGER.debug("Yandex Smart Home component not available")
+    
     return True
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
