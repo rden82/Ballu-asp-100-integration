@@ -1,0 +1,44 @@
+yandex_smart_home:
+  entity_config:
+    climate.ballu_asp_100_{{MAC}}:
+      name: Бризер
+      type: devices.types.ventilation
+      modes:
+        fan_speed:
+          one:
+            - S1
+          two:
+            - S2
+          three:
+            - S3
+          four:
+            - S4
+          five:
+            - S5
+          six:
+            - S6
+          seven:
+            - S7
+          min:
+            - Off
+        thermostat:
+          normal:
+            - comfort
+          eco:
+            - eco
+          turbo:
+            - boost
+          quiet:
+            - sleep
+          auto:
+            - auto
+      custom_modes:
+        thermostat:
+          state_entity_id: ballu_asp_100_{{MAC}}
+          state_attribute: preset_mode
+          set_mode:
+            service: climate.set_preset_mode
+            data:
+              preset_mode: "{{ mode }}"
+            target:
+              entity_id: ballu_asp_100_{{MAC}}
