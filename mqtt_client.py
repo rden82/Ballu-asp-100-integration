@@ -19,6 +19,8 @@ class BalluMQTTClient:
         self.client = None
         self.connected = False
         self.subscriptions = {}
+        self._message_queue = asyncio.Queue()
+        self._message_processor_task = None
         
     async def connect(self):
         """Connect to MQTT broker."""
@@ -50,6 +52,11 @@ class BalluMQTTClient:
             
             await self.hass.async_add_executor_job(_connect)
             
+            # Start message processor
+            self._message_processor_task = asyncio.create_task(
+                self._process_messages()
+            )
+            
             # Wait for connection
             for _ in range(10):
                 if self.connected:
@@ -66,6 +73,13 @@ class BalluMQTTClient:
     
     async def disconnect(self):
         """Disconnect from MQTT broker."""
+        if self._message_processor_task:
+            self._message_processor_task.cancel()
+            try:
+                await self._message_processor_task
+            except asyncio.CancelledError:
+                pass
+        
         if self.client:
             def _disconnect():
                 self.client.loop_stop()
@@ -89,16 +103,39 @@ class BalluMQTTClient:
             self.connected = False
     
     def _on_message(self, client, userdata, msg):
-        """Handle MQTT messages."""
+        """Handle MQTT messages - put them in queue for async processing."""
         topic = msg.topic
         payload = msg.payload.decode()
         
-        _LOGGER.debug("Received MQTT message: %s = %s", topic, payload)
+        _LOGGER.debug("Queueing MQTT message: %s = %s", topic, payload)
         
-        # Call registered callbacks
-        for sub_topic, callback in self.subscriptions.items():
-            if self._topic_matches(sub_topic, topic):
-                callback(topic, payload)
+        # Put message in queue for async processing
+        try:
+            self._message_queue.put_nowait((topic, payload))
+        except asyncio.QueueFull:
+            _LOGGER.warning("Message queue full, dropping message: %s", topic)
+    
+    async def _process_messages(self):
+        """Process MQTT messages in async context."""
+        while True:
+            try:
+                topic, payload = await self._message_queue.get()
+                _LOGGER.debug("Processing MQTT message: %s = %s", topic, payload)
+                
+                # Call registered callbacks
+                for sub_topic, callback in self.subscriptions.items():
+                    if self._topic_matches(sub_topic, topic):
+                        # Schedule callback in event loop
+                        self.hass.loop.call_soon_threadsafe(
+                            lambda: callback(topic, payload)
+                        )
+                
+                self._message_queue.task_done()
+                
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                _LOGGER.error("Error processing MQTT message: %s", e)
     
     def _on_disconnect(self, client, userdata, rc):
         """Handle MQTT disconnection."""

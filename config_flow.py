@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import logging
 import voluptuous as vol
+from typing import Any
+
 from homeassistant import config_entries
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.data_entry_flow import FlowResult
 
 from .const import (
@@ -20,43 +22,31 @@ class BalluConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     VERSION = 1
 
-    async def async_step_user(self, user_input: dict | None = None) -> FlowResult:
+    async def async_step_user(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
         """Handle the initial step."""
-        errors = {}
+        errors: dict[str, str] = {}
         
         if user_input is not None:
-            # Basic validation
-            device_mac = user_input[CONF_DEVICE_MAC].strip().lower()
-            client_id = user_input[CONF_CLIENT_ID].strip().lower()
-            
-            if not device_mac or len(device_mac) != 12:
-                errors[CONF_DEVICE_MAC] = "invalid_mac"
-            if not client_id or len(client_id) != 32:
-                errors[CONF_CLIENT_ID] = "invalid_client_id"
-            if not user_input[CONF_BROKER_HOST]:
-                errors[CONF_BROKER_HOST] = "invalid_host"
-            if not 1 <= user_input[CONF_BROKER_PORT] <= 65535:
-                errors[CONF_BROKER_PORT] = "invalid_port"
-            
-            if not errors:
+            # Validate input
+            if not user_input[CONF_DEVICE_MAC].strip():
+                errors[CONF_DEVICE_MAC] = "device_mac_required"
+            elif not user_input[CONF_CLIENT_ID].strip():
+                errors[CONF_CLIENT_ID] = "client_id_required"
+            else:
                 # Create unique ID and check if already configured
-                unique_id = f"ballu_asp100_{device_mac}"
+                unique_id = f"ballu_asp100_{user_input[CONF_DEVICE_MAC].lower().replace(':', '')}"
+                
                 await self.async_set_unique_id(unique_id)
                 self._abort_if_unique_id_configured()
                 
-                _LOGGER.info("Creating Ballu ASP-100 config entry: %s", device_mac)
+                _LOGGER.debug("Creating Ballu ASP-100 entry with unique_id: %s", unique_id)
                 
                 # Create the config entry
                 return self.async_create_entry(
-                    title=f"Ballu ASP-100 ({device_mac})",
-                    data={
-                        CONF_DEVICE_MAC: device_mac,
-                        CONF_CLIENT_ID: client_id,
-                        CONF_BROKER_HOST: user_input[CONF_BROKER_HOST],
-                        CONF_BROKER_PORT: user_input[CONF_BROKER_PORT],
-                        CONF_USERNAME: user_input[CONF_USERNAME],
-                        CONF_PASSWORD: user_input[CONF_PASSWORD],
-                    },
+                    title=f"Ballu ASP-100 ({user_input[CONF_DEVICE_MAC]})",
+                    data=user_input,
                 )
 
         # Show the form with pre-filled values
@@ -74,7 +64,54 @@ class BalluConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             data_schema=data_schema,
             errors=errors,
             description_placeholders={
-                "device_mac": "a0dd6c0b3cd8",
-                "client_id": "bb2791f30a28776d6fe45943f1b68928"
+                "entity_id": "climate.ballu_oneair_asp_100_breezer"
             }
+        )
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry: config_entries.ConfigEntry) -> config_entries.OptionsFlow:
+        """Create the options flow."""
+        return BalluOptionsFlowHandler(config_entry)
+
+
+class BalluOptionsFlowHandler(config_entries.OptionsFlow):
+    """Handle options flow for Ballu ASP-100."""
+    
+    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
+        """Initialize options flow."""
+        self.config_entry = config_entry
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Manage the options."""
+        return await self.async_step_user(user_input)
+
+    async def async_step_user(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Handle options flow."""
+        errors: dict[str, str] = {}
+        
+        if user_input is not None:
+            # Update config entry with new data
+            new_data = {**self.config_entry.data, **user_input}
+            self.hass.config_entries.async_update_entry(
+                self.config_entry, data=new_data
+            )
+            return self.async_create_entry(title="", data={})
+
+        # Pre-fill form with current values
+        data_schema = vol.Schema({
+            vol.Required(CONF_BROKER_HOST, default=self.config_entry.data.get(CONF_BROKER_HOST, DEFAULT_BROKER_HOST)): str,
+            vol.Required(CONF_BROKER_PORT, default=self.config_entry.data.get(CONF_BROKER_PORT, DEFAULT_BROKER_PORT)): int,
+            vol.Required(CONF_USERNAME, default=self.config_entry.data.get(CONF_USERNAME, DEFAULT_USERNAME)): str,
+            vol.Required(CONF_PASSWORD, default=self.config_entry.data.get(CONF_PASSWORD, DEFAULT_PASSWORD)): str,
+        })
+
+        return self.async_show_form(
+            step_id="user",
+            data_schema=data_schema,
+            errors=errors,
         )

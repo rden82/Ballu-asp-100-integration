@@ -28,21 +28,31 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     }
     
     # Connect to MQTT broker
-    if not await mqtt_client.connect():
-        _LOGGER.error("Failed to connect to MQTT broker")
+    try:
+        if not await mqtt_client.connect():
+            _LOGGER.error("Failed to connect to MQTT broker")
+            return False
+    except Exception as e:
+        _LOGGER.error("Error connecting to MQTT broker: %s", e)
         return False
 
+    # Setup platforms
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    
     return True
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     # Disconnect MQTT client
-    if entry.entry_id in hass.data[DOMAIN]:
+    if entry.entry_id in hass.data.get(DOMAIN, {}):
         mqtt_client = hass.data[DOMAIN][entry.entry_id].get("mqtt_client")
         if mqtt_client:
             await mqtt_client.disconnect()
     
     if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
         hass.data[DOMAIN].pop(entry.entry_id)
+        
+        if not hass.data[DOMAIN]:  # If no entries left, remove the domain
+            hass.data.pop(DOMAIN)
+            
     return unload_ok
