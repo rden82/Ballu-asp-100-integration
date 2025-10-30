@@ -1,0 +1,299 @@
+"""Climate platform for Ballu ASP-100 Breezer."""
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+from homeassistant.components.climate import (
+    ClimateEntity,
+    ClimateEntityFeature,
+    HVACMode,
+)
+from homeassistant.components.climate.const import (
+    PRESET_ECO,
+    PRESET_BOOST,
+    PRESET_SLEEP,
+    PRESET_COMFORT,
+    PRESET_NONE,
+)
+from homeassistant.const import ATTR_TEMPERATURE, UnitOfTemperature
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.config_entries import ConfigEntry
+
+from .const import DOMAIN, CONF_DEVICE_MAC, CONF_CLIENT_ID, MANUFACTURER, MODEL, TOPIC_PREFIX, DEVICE_TYPE
+
+_LOGGER = logging.getLogger(__name__)
+
+# Custom presets
+PRESET_AUTO = "auto"
+
+async def async_setup_entry(
+    hass: HomeAssistant,
+    config_entry: ConfigEntry,
+    async_add_entities: AddEntitiesCallback,
+) -> None:
+    """Set up Ballu ASP-100 breezer from config entry."""
+    entry_data = hass.data[DOMAIN][config_entry.entry_id]
+    device_mac = config_entry.data[CONF_DEVICE_MAC]
+    client_id = config_entry.data.get(CONF_CLIENT_ID, "")
+    
+    _LOGGER.debug("Setting up Ballu ASP-100 Breezer: MAC=%s, Client=%s", device_mac, client_id)
+    
+    # Build topic prefix
+    topic_prefix = f"{TOPIC_PREFIX}/{DEVICE_TYPE}/{client_id}"
+    
+    async_add_entities([BalluASP100Breezer(entry_data, device_mac, topic_prefix, config_entry.title)])
+
+class BalluASP100Breezer(ClimateEntity):
+    """Representation of a Ballu ASP-100 Breezer device."""
+
+    _attr_has_entity_name = True
+    _attr_name = None
+    
+    # Supported features - updated for breezer
+    _attr_supported_features = (
+        ClimateEntityFeature.TARGET_TEMPERATURE |
+        ClimateEntityFeature.FAN_MODE |
+        ClimateEntityFeature.PRESET_MODE |
+        ClimateEntityFeature.TURN_OFF |
+        ClimateEntityFeature.TURN_ON
+    )
+    
+    # HVAC modes - simplified for breezer
+    _attr_hvac_modes = [HVACMode.OFF, HVACMode.FAN_ONLY]
+    _attr_preset_modes = [PRESET_NONE, PRESET_AUTO, PRESET_COMFORT, PRESET_ECO, PRESET_BOOST, PRESET_SLEEP]
+    
+    # Fan modes - based on the example
+    _attr_fan_modes = ["Off", "S1", "S2", "S3", "S4", "S5", "S6", "S7"]
+    
+    # Temperature settings
+    _attr_min_temp = 5
+    _attr_max_temp = 25
+    _attr_temperature_unit = UnitOfTemperature.CELSIUS
+    _attr_target_temperature_step = 1
+
+    def __init__(self, entry_data: dict, device_mac: str, topic_prefix: str, name: str) -> None:
+        """Initialize the breezer device."""
+        self._entry_data = entry_data
+        self._device_mac = device_mac
+        self._topic_prefix = topic_prefix
+        self._mqtt_client = entry_data["mqtt_client"]
+        self._attr_unique_id = f"ballu_asp100_{device_mac}_breezer"
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, device_mac)},
+            "name": name,
+            "manufacturer": MANUFACTURER,
+            "model": MODEL,
+        }
+        
+        # State attributes
+        self._hvac_mode = HVACMode.OFF
+        self._target_temperature = 20
+        self._current_temperature = None
+        self._fan_mode = "Off"
+        self._preset_mode = PRESET_NONE
+        self._current_mode = 0  # 0=Off, 1=Manual, 2=Auto CO2, 3=Night, 4=Turbo, 5=Eco
+        self._current_speed = "0"  # Fan speed
+
+    async def async_added_to_hass(self) -> None:
+        """Subscribe to MQTT topics when entity is added to HA."""
+        await self._subscribe_topics()
+
+    async def _subscribe_topics(self) -> None:
+        """Subscribe to MQTT topics."""
+        
+        topics = {
+            "mode": f"{self._topic_prefix}/state/mode",
+            "speed": f"{self._topic_prefix}/state/speed", 
+            "temperature": f"{self._topic_prefix}/state/temperature",
+            "current_temp": f"{self._topic_prefix}/state/sensor/temperature",
+        }
+
+        @callback
+        def message_received(topic: str, payload: str):
+            """Handle incoming MQTT messages."""
+            try:
+                _LOGGER.debug("Received MQTT message: %s = %s", topic, payload)
+                
+                if "mode" in topic:
+                    self._update_mode_from_payload(payload)
+                elif "speed" in topic:
+                    self._update_fan_from_payload(payload)
+                elif "temperature" in topic and "sensor" not in topic:
+                    self._update_temperature_from_payload(payload)
+                elif "sensor/temperature" in topic:
+                    self._update_current_temp_from_payload(payload)
+                    
+                self.async_write_ha_state()
+                
+            except Exception as e:
+                _LOGGER.error("Error processing MQTT message: %s", e)
+
+        for topic_attr, topic in topics.items():
+            self._mqtt_client.subscribe(topic, message_received)
+
+    def _update_mode_from_payload(self, payload: str) -> None:
+        """Update mode from payload."""
+        try:
+            mode_value = int(payload)
+            self._current_mode = mode_value
+            
+            # Update HVAC mode
+            if mode_value == 0:
+                self._hvac_mode = HVACMode.OFF
+            else:
+                self._hvac_mode = HVACMode.FAN_ONLY
+            
+            # Update preset mode
+            if mode_value == 1:
+                self._preset_mode = PRESET_COMFORT
+            elif mode_value == 2:
+                self._preset_mode = PRESET_AUTO
+            elif mode_value == 3:
+                self._preset_mode = PRESET_SLEEP
+            elif mode_value == 4:
+                self._preset_mode = PRESET_BOOST
+            elif mode_value == 5:
+                self._preset_mode = PRESET_ECO
+            else:
+                self._preset_mode = PRESET_NONE
+                
+            _LOGGER.debug("Updated mode: value=%s, hvac=%s, preset=%s", 
+                         mode_value, self._hvac_mode, self._preset_mode)
+                        
+        except ValueError:
+            _LOGGER.error("Invalid mode payload: %s", payload)
+
+    def _update_fan_from_payload(self, payload: str) -> None:
+        """Update fan mode from payload."""
+        speed_mapping = {
+            "0": "Off",
+            "1": "S1", 
+            "2": "S2",
+            "3": "S3",
+            "4": "S4",
+            "5": "S5",
+            "6": "S6",
+            "7": "S7",
+        }
+        self._fan_mode = speed_mapping.get(payload, "Off")
+        self._current_speed = payload
+        _LOGGER.debug("Updated fan mode: %s (raw: %s)", self._fan_mode, payload)
+
+    def _update_temperature_from_payload(self, payload: str) -> None:
+        """Update target temperature from payload."""
+        try:
+            self._target_temperature = float(payload)
+        except ValueError:
+            _LOGGER.error("Invalid temperature payload: %s", payload)
+
+    def _update_current_temp_from_payload(self, payload: str) -> None:
+        """Update current temperature from payload."""
+        try:
+            self._current_temperature = float(payload)
+        except ValueError:
+            _LOGGER.error("Invalid current temperature payload: %s", payload)
+
+    # Control methods
+    async def async_set_temperature(self, **kwargs: Any) -> None:
+        """Set new target temperature."""
+        if temperature := kwargs.get(ATTR_TEMPERATURE):
+            await self._mqtt_client.publish(
+                f"{self._topic_prefix}/control/temperature",
+                str(int(temperature)),
+            )
+            self._target_temperature = temperature
+            self.async_write_ha_state()
+
+    async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
+        """Set new HVAC mode."""
+        if hvac_mode == HVACMode.OFF:
+            await self._mqtt_client.publish(
+                f"{self._topic_prefix}/control/mode",
+                "0",  # Turn off
+            )
+            self._hvac_mode = HVACMode.OFF
+            self._current_mode = 0
+        else:  # FAN_ONLY
+            # Turn on with last used mode, or default to manual
+            mode_to_set = self._current_mode if self._current_mode > 0 else 1
+            await self._mqtt_client.publish(
+                f"{self._topic_prefix}/control/mode",
+                str(mode_to_set),
+            )
+            self._hvac_mode = HVACMode.FAN_ONLY
+            self._current_mode = mode_to_set
+        
+        self.async_write_ha_state()
+
+    async def async_set_fan_mode(self, fan_mode: str) -> None:
+        """Set new fan mode."""
+        speed_mapping = {
+            "Off": "0",
+            "S1": "1",
+            "S2": "2", 
+            "S3": "3",
+            "S4": "4",
+            "S5": "5",
+            "S6": "6",
+            "S7": "7",
+        }
+        speed_value = speed_mapping.get(fan_mode, "0")
+        
+        await self._mqtt_client.publish(
+            f"{self._topic_prefix}/control/speed",
+            speed_value,
+        )
+        
+        self._fan_mode = fan_mode
+        self._current_speed = speed_value
+        self.async_write_ha_state()
+
+    async def async_set_preset_mode(self, preset_mode: str) -> None:
+        """Set new preset mode."""
+        preset_mapping = {
+            PRESET_COMFORT: "1",
+            PRESET_AUTO: "2", 
+            PRESET_SLEEP: "3",
+            PRESET_BOOST: "4",
+            PRESET_ECO: "5",
+        }
+        
+        mode_value = preset_mapping.get(preset_mode, "1")
+        
+        await self._mqtt_client.publish(
+            f"{self._topic_prefix}/control/mode",
+            mode_value,
+        )
+        
+        self._preset_mode = preset_mode
+        self._hvac_mode = HVACMode.FAN_ONLY
+        self._current_mode = int(mode_value)
+        self.async_write_ha_state()
+
+    # Property methods
+    @property
+    def current_temperature(self) -> float | None:
+        """Return the current temperature."""
+        return self._current_temperature
+
+    @property
+    def target_temperature(self) -> float | None:
+        """Return the temperature we try to reach."""
+        return self._target_temperature
+
+    @property
+    def hvac_mode(self) -> HVACMode:
+        """Return current operation mode."""
+        return self._hvac_mode
+
+    @property
+    def fan_mode(self) -> str | None:
+        """Return the fan setting."""
+        return self._fan_mode
+
+    @property
+    def preset_mode(self) -> str | None:
+        """Return the preset setting."""
+        return self._preset_mode

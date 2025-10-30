@@ -1,0 +1,12 @@
+{
+    "domain": "ballu_asp100",
+    "name": "Ballu ASP-100",
+    "codeowners": ["@yourusername"],
+    "config_flow": true,
+    "dependencies": [],
+    "documentation": "https://github.com/yourusername/ballu_asp100",
+    "integration_type": "device",
+    "iot_class": "local_push",
+    "version": "1.0.0",
+    "requirements": ["paho-mqtt>=1.6.1"]
+}
