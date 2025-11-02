@@ -31,9 +31,8 @@ class BalluMQTTClient:
                 self.config.get("password")
             )
             
-            # Setup TLS
-            self.client.tls_set(cert_reqs=ssl.CERT_NONE)
-            self.client.tls_insecure_set(True)
+            # Setup TLS in executor to avoid blocking
+            await self._setup_tls()
             
             # Setup callbacks
             self.client.on_connect = self._on_connect
@@ -46,6 +45,7 @@ class BalluMQTTClient:
             
             _LOGGER.debug("Connecting to MQTT broker: %s:%s", host, port)
             
+            # Connect in executor
             def _connect():
                 self.client.connect(host, port, 60)
                 self.client.loop_start()
@@ -70,6 +70,21 @@ class BalluMQTTClient:
         except Exception as e:
             _LOGGER.error("Error connecting to MQTT broker: %s", e)
             return False
+    
+    async def _setup_tls(self):
+        """Setup TLS in executor to avoid blocking event loop."""
+        def _setup_tls_sync():
+            # Create SSL context
+            context = ssl.create_default_context()
+            context.check_hostname = False
+            context.verify_mode = ssl.CERT_NONE
+            
+            # Configure TLS
+            self.client.tls_set_context(context)
+            self.client.tls_insecure_set(True)
+        
+        await self.hass.async_add_executor_job(_setup_tls_sync)
+        _LOGGER.debug("TLS setup completed")
     
     async def disconnect(self):
         """Disconnect from MQTT broker."""
@@ -147,7 +162,11 @@ class BalluMQTTClient:
         self.subscriptions[topic] = callback
         
         if self.connected and self.client:
-            self.client.subscribe(topic)
+            def _subscribe():
+                self.client.subscribe(topic)
+            self.hass.loop.call_soon_threadsafe(
+                lambda: self.hass.async_add_executor_job(_subscribe)
+            )
             _LOGGER.debug("Subscribed to: %s", topic)
     
     async def publish(self, topic: str, payload: str, qos: int = 0, retain: bool = False):
